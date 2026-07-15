@@ -1,0 +1,46 @@
+#######################################
+# Syntax Coloring Map for UNOQ_STM32_HAL
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+GP_Pin	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+SetPinAF	KEYWORD2
+enableGPIOClock	KEYWORD2
+pinMode_STM	KEYWORD2
+digitalWrite_STM	KEYWORD2
+digitalRead_STM	KEYWORD2
+togglePin_STM	KEYWORD2
+adc1Read_STM	KEYWORD2
+
+PWM_Setup	KEYWORD2
+PWM_Setup_STM	KEYWORD2
+PWM_AddChannel	KEYWORD2
+PWM_AddChannel_STM	KEYWORD2
+PWM_SetDuty	KEYWORD2
+PWM_SetFrequency	KEYWORD2
+PWM_SetDeadTime	KEYWORD2
+
+PWM_Capture_Init_CH1	KEYWORD2
+PWM_Capture_GetDuty	KEYWORD2
+PWM_Capture_GetFrequency	KEYWORD2
+PWM_Capture_GetHighTicks	KEYWORD2
+PWM_Capture_GetPeriodTicks	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+INPUT_STM	LITERAL1
+OUTPUT_STM	LITERAL1
+ANALOG_STM	LITERAL1
+NOPULL_STM	LITERAL1
+PULLUP_STM	LITERAL1
+UNOQ_TIM_CLK_HZ	LITERAL1
