@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # UNOQ_STM32_HAL
 
 A minimal, register-level HAL for the STM32U5-based Arduino UNO Q. No ST
@@ -71,3 +72,6 @@ mapping.
   one PWM channel, one ADC read
 - `PWM_UART_Control` — the full 4-channel PWM-over-serial demo (same command
   set as the original sketch: `"<ch> <duty>"` and `"p <freq_hz>"`)
+=======
+# UNOQ_STM32_HAL
+>>>>>>> bbbefbaa9abc4115c761d6e7a178978256fc5f8a
