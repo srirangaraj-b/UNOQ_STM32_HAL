@@ -73,5 +73,3 @@ mapping.
 - `PWM_UART_Control` — the full 4-channel PWM-over-serial demo (same command
   set as the original sketch: `"<ch> <duty>"` and `"p <freq_hz>"`)
 =======
-# UNOQ_STM32_HAL
->>>>>>> bbbefbaa9abc4115c761d6e7a178978256fc5f8a
