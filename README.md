@@ -1,75 +1,137 @@
-<<<<<<< HEAD
 # UNOQ_STM32_HAL
 
-A minimal, register-level HAL for the STM32U5-based Arduino UNO Q. No ST
-HAL/LL layer in the way — direct CMSIS register access, same approach as a
-hand-rolled bare-metal driver, just packaged as a reusable library with a
-generic API instead of one hardcoded sketch.
+A high-performance, register-level Hardware Abstraction Layer (HAL) library designed specifically for the **STM32U585** microcontroller on the **Arduino UNO Q**.
 
-## Install
+This library bridges the gap between the Zephyr-based Arduino core and direct hardware control, offering robust, low-overhead support for **GPIO**, **PWM Generation**, **PWM Input Capture**, and **ADC Analog Readings**—fully optimized for rigid hardware layouts.
 
-1. Zip this folder as `UNOQ_STM32_HAL.zip` (make sure `library.properties`
-   sits at the top level of the zip, not nested one folder deeper).
-2. Arduino IDE → **Sketch → Include Library → Add .ZIP Library...** → select
-   the zip.
-3. `File → Examples → UNOQ_STM32_HAL` will show the two example sketches.
+---
 
-## What's in it
+## Features
 
-- **GPIO**: `pinMode_STM`, `digitalWrite_STM`, `digitalRead_STM`, `togglePin_STM`
-- **PWM output**: `PWM_Setup` / `PWM_Setup_STM` (any timer/channel, optional
-  complementary output + dead-time on TIM1/TIM8), `PWM_AddChannel(_STM)` for
-  additional channels on an already-configured timer, `PWM_SetDuty`,
-  `PWM_SetFrequency`, `PWM_SetDeadTime`
-- **ADC**: `adc1Read_STM` — polled single-conversion read on ADC1
-- **PWM input capture**: `PWM_Capture_Init_CH1` + `PWM_Capture_GetDuty/
-  GetFrequency/GetHighTicks/GetPeriodTicks`
-- **Pin table**: `PA0`...`PI7` matching the UNO Q silkscreen, as `GP_Pin`
-  structs you pass straight into the `_STM` function variants
+* **Advanced GPIO Control:** Fast atomic bit-manipulation (`BSRR`), direct register access, and automatic alternate-function (AF) release to force system-locked pins into pure software GPIO mode.
+* **Hardware PWM Output:** Multi-channel support across STM32 timers (`TIM1`, `TIM2`, `TIM3`, `TIM4`, `TIM5`, `TIM8`, `TIM15`, `TIM16`, `TIM17`) with preloaded duty cycles, frequency scaling, dead-time insertion, and complementary outputs.
+* **PWM Input Capture:** Hardware-assisted frequency and duty cycle measurement using timer input capture modes.
+* **Flexible ADC Helpers:** 12-bit analog input reading supporting both string-based pin names (e.g., `"PA0"`) and native `GP_Pin` objects, with built-in millivolt conversion and safe Zephyr ADC initialization.
+* **Arduino Compatibility:** Seamless integration with standard Arduino APIs and libraries (such as `LiquidCrystal`).
 
-## Before you rely on exact numbers
+---
 
-This was distilled from a working sketch, generalized to cover any
-timer/channel/pin instead of one hardcoded configuration. A few things are
-still board/clock-config dependent and are flagged with `NOTE:` comments in
-the source — check these against your actual clock tree and the STM32U585
-reference manual (RM0456) before trusting exact PWM frequency, dead-time, or
-ADC channel numbers:
+## Installation
 
-- `UNOQ_TIM_CLK_HZ` (default 160 MHz) — override it with a `#define` before
-  `#include <UNOQ_STM32_HAL.h>` if your timer input clock differs
-- The `af` argument to every PWM/capture call — always the caller's
-  responsibility, cross-check against the AF table for your exact pin
-- ADC1 channel numbers in `adc1Read_STM` (peripheral channel, not pin number)
-- `PWM_SetDeadTime`'s DTG encoding only covers the 0–127×tDTS range
+1. Download or clone this repository into your Arduino libraries folder:
+* `Documents/Arduino/libraries/UNOQ_STM32_HAL/`
 
-## Using these pins with other Arduino libraries
 
-Every `GP_Pin` (the `PA8`, `PB0`, ... table) implicitly converts to the Arduino
-core's own digital pin number, so you can hand it straight to any standard
-library that expects an `int` pin - `LiquidCrystal`, `Servo`, `SoftwareSerial`,
-`SPI`/`Wire` pin overrides, and so on. No separate lookup table to maintain:
+2. Ensure you have the **Arduino UNO Q** hardware core installed via the Arduino IDE Board Manager.
+3. Restart the Arduino IDE.
+
+---
+
+## API Quick Reference
+
+### 1. GPIO & Digital I/O
+
+```cpp
+pinMode_STM(pin, mode, pull); // e.g., pinMode_STM(PA5, OUTPUT);
+digitalWrite_STM(pin, state); // HIGH or LOW (1 or 0)
+uint8_t val = digitalRead_STM(pin);
+togglePin_STM(pin);
+
+```
+
+### 2. ADC Analog Reading
+
+The library supports robust ADC measurements via pin name strings, pin objects, or convenience macros:
+
+```cpp
+// Read raw 12-bit value (0 - 4095)
+int raw1 = analogRead_STM("PA0");         // Using string name
+int raw2 = analogRead_Pin_STM(PA0);       // Using GP_Pin object
+int raw3 = ADC_RAW(PA0);                  // Using macro shortcut
+
+// Read converted millivolts (mV)
+int mv1  = analogReadMilliVolts_STM("PA0");
+int mv2  = analogReadMilliVolts_Pin_STM(PA0);
+int mv3  = ADC_MV(PA0);
+
+```
+
+### 3. PWM Output
+
+```cpp
+// Setup PWM on a pin (e.g., TIM3, Channel 1, 1 kHz, 50% duty, AF2)
+PWM_Setup_STM(PA6, TIM3, 1, false, 1000, 50, 2);
+
+// Change duty cycle or frequency dynamically
+PWM_SetDuty(TIM3, 1, false, 75); // 75% duty
+PWM_SetFrequency(TIM3, 1, false, 2000); // Change to 2 kHz
+
+```
+
+---
+
+## Example Usage: Analog Sensor Reading
+
+```cpp
+#include <UNOQ_STM32_HAL.h>
+
+const GP_Pin sensorPin = PA0;
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) { delay(10); }
+  Serial.println("ADC Initialized.");
+}
+
+void loop() {
+  // Read raw value and calculated voltage
+  int rawVal = analogRead_Pin_STM(sensorPin);
+  int milliVolts = analogReadMilliVolts_Pin_STM(sensorPin);
+
+  Serial.print("Raw ADC (0-4095): ");
+  Serial.print(rawVal);
+  Serial.print(" | Voltage: ");
+  Serial.print(milliVolts);
+  Serial.println(" mV");
+
+  delay(1000);
+}
+
+```
+
+---
+
+## Example Usage: 20x4 LCD Interop
+
+You can easily pass library pin objects directly into standard Arduino libraries like `LiquidCrystal`:
 
 ```cpp
 #include <UNOQ_STM32_HAL.h>
 #include <LiquidCrystal.h>
 
-LiquidCrystal lcd(PB6, PB7, PC0, PC1, PA4, PA5); // GP_Pin -> Arduino pin, automatic
+// LiquidCrystal(rs, enable, d4, d5, d6, d7)
+LiquidCrystal lcd(PE7, PE8, PF14, PF15, PA3, PD8);
+
+void setup() {
+  lcd.begin(20, 4); // 20 columns, 4 rows
+  lcd.setCursor(0, 0);
+  lcd.print("Arduino UNO Q");
+  lcd.setCursor(0, 1);
+  lcd.print("STM32U585 Active");
+}
+
+void loop() {
+  lcd.setCursor(0, 2);
+  lcd.print("Uptime: ");
+  lcd.print(millis() / 1000);
+  lcd.print("s   ");
+  delay(500);
+}
+
 ```
 
-Under the hood this goes through the STM32 core's own `PinName` / `GPIOPort[]`
-mapping (`GP_ToArduinoPin()` does the conversion explicitly, if you'd rather
-call it directly or check the result). If a pin you picked isn't exposed in
-the current board variant's Arduino pin table, the conversion returns `NC`
-(`0xFFFFFFFF`) - our own register-level HAL functions still work on that pin
-regardless, since they never go through the Arduino pin-number layer; it's
-only *other* libraries built on `digitalWrite`/`pinMode` that need a valid
-mapping.
+---
 
-## Examples
+## License
 
-- `GPIO_PWM_ADC_Basics` — smallest possible smoke test: one digital output,
-  one PWM channel, one ADC read
-- `PWM_UART_Control` — the full 4-channel PWM-over-serial demo (same command
-  set as the original sketch: `"<ch> <duty>"` and `"p <freq_hz>"`)
-=======
+This project is open-source and available under the MIT License.
