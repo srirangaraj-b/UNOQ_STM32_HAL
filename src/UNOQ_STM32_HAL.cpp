@@ -497,7 +497,7 @@ bool PWM_SetDeadTime(TIM_TypeDef* timer, uint32_t dead_ns, uint32_t timer_clk)
 }
 
 /* =============================================================================
- * PWM input capture
+ * PWM input capture - paired mode (one signal per timer, slave-reset)
  * ===========================================================================*/
 typedef struct {
     uint32_t period;
@@ -637,6 +637,223 @@ float PWM_Capture_GetDuty(TIM_TypeDef* timer)
     uint32_t h = capState[capIndex(timer)].high;
     if (h > p) h = p;
     return (float)h * 100.0f / (float)p;
+}
+
+/* =============================================================================
+ * PWM input capture - independent per channel
+ *
+ * Each channel is mapped to its own TIx input (CCxS = 01) and captures BOTH
+ * edges (CCxP = 1, CCxNP = 1). The counter free-runs, so CH1..CH4 of one
+ * timer can measure four unrelated signals at the same time.
+ *
+ *   period = rising(n) - rising(n-1)
+ *   high   = falling   - rising
+ *
+ * Edges are collected by polling the CCxIF flags (see header for limits).
+ * ===========================================================================*/
+typedef struct {
+    GPIO_TypeDef* port;
+    uint8_t  pin;
+    uint32_t period;
+    uint32_t high;
+    uint32_t lastRise;
+    uint32_t lastMs;
+    bool     enabled;
+    bool     valid;
+    bool     synced;       /* a rising edge has been seen, alternation is tracked */
+    bool     expectFall;   /* next captured edge should be a falling one          */
+    bool     haveHigh;     /* high time of the current cycle is known             */
+} ChCapState;
+
+static ChCapState chCap[7][4];
+
+static inline uint32_t tickDiff(TIM_TypeDef* t, uint32_t now, uint32_t prev)
+{
+    if (now >= prev) return now - prev;
+    const uint64_t mod = (uint64_t)t->ARR + 1ULL;      /* counter wraps at ARR */
+    return (uint32_t)(mod - prev + now);
+}
+
+static inline uint32_t chFlagIF(uint8_t ch) { return 1UL << ch; }          /* CCxIF: bit x   */
+static inline uint32_t chFlagOF(uint8_t ch) { return 1UL << (ch + 8U); }   /* CCxOF: bit x+8 */
+
+static void chPoll(TIM_TypeDef* t, int idx, uint8_t ch)
+{
+    ChCapState* s = &chCap[idx][ch - 1];
+    if (!s->enabled) return;
+
+    const uint32_t sr = t->SR;                          /* snapshot first */
+    if (!(sr & chFlagIF(ch))) return;
+
+    const uint32_t v = getCCR(t, ch);                   /* reading CCRx clears CCxIF */
+    if (sr & chFlagOF(ch)) {
+        t->SR = ~chFlagOF(ch);                          /* rc_w0: clear overrun only */
+        s->synced   = false;                            /* an edge was lost -> resync */
+        s->haveHigh = false;
+    }
+
+    if (!s->synced) {
+        /* Wait for a rising edge: the pin should currently read high */
+        if (s->port->IDR & (1UL << s->pin)) {
+            s->lastRise   = v;
+            s->synced     = true;
+            s->expectFall = true;
+            s->haveHigh   = false;
+        }
+        return;
+    }
+
+    if (s->expectFall) {                                /* falling edge */
+        s->high       = tickDiff(t, v, s->lastRise);
+        s->haveHigh   = true;
+        s->expectFall = false;
+    } else {                                            /* rising edge */
+        const uint32_t period = tickDiff(t, v, s->lastRise);
+        s->lastRise   = v;
+        s->expectFall = true;
+        if (s->haveHigh) {
+            s->period = period;
+            if (s->high > period) s->high = period;
+            s->lastMs = millis();
+            s->valid  = true;
+        }
+    }
+}
+
+static bool chActive(TIM_TypeDef* t, int idx, uint8_t ch)
+{
+    const ChCapState* s = &chCap[idx][ch - 1];
+    if (!s->enabled) return false;
+    chPoll(t, idx, ch);
+    return s->valid && s->period != 0 && (uint32_t)(millis() - s->lastMs) <= capTimeoutMs;
+}
+
+static TIM_TypeDef* const capTimers[] = {
+    TIM1, TIM2, TIM3, TIM4, TIM5, TIM8,
+#ifdef TIM15
+    TIM15,
+#endif
+};
+
+bool PWM_CaptureCh_Init_Ex(GP_Pin pin, TIM_TypeDef* timer, uint8_t channel, uint8_t af,
+                           uint16_t prescaler, uint8_t filter)
+{
+    const int idx = capIndex(timer);
+    if (idx < 0 || channel < 1 || channel > maxChannels(timer)) return false;
+    if (!timerClockEnable(timer)) return false;
+
+    /* Slave-reset mode (from PWM_Capture_Init) cannot share the timer */
+    if ((timer->SMCR & 7U) == 4U) return false;
+
+    SetPinAF(pin.port, pin.pin, af);
+
+    const bool running = (timer->CR1 & TIM_CR1_CEN) != 0;
+    if (!running) {
+        timer->SMCR = 0;
+        timer->PSC  = prescaler;
+        timer->ARR  = is32bit(timer) ? 0xFFFFFFFFUL : 0xFFFFUL;
+    }
+
+    const uint32_t base = (uint32_t)(channel - 1) * 4U;
+    timer->CCER &= ~(0xFUL << base);                    /* CCxS is only writable while CCxE = 0 */
+
+    const uint32_t shift = (channel & 1U) ? 0U : 8U;
+    const uint32_t cfg   = (1UL /* CCxS = 01: TIx */ | ((uint32_t)(filter & 0xF) << 4)) << shift;
+    volatile uint32_t* ccmr = (channel <= 2) ? &timer->CCMR1 : &timer->CCMR2;
+    *ccmr = (*ccmr & ~(0xFFUL << shift)) | cfg;
+
+    timer->CCER |= (1UL << base)                        /* CCxE                          */
+                |  (1UL << (base + 1U))                 /* CCxP  \ both set = capture on */
+                |  (1UL << (base + 3U));                /* CCxNP / both edges            */
+
+    timer->SR = ~(chFlagIF(channel) | chFlagOF(channel));
+
+    ChCapState* s = &chCap[idx][channel - 1];
+    memset(s, 0, sizeof(*s));
+    s->port    = pin.port;
+    s->pin     = pin.pin & 0x0F;
+    s->enabled = true;
+
+    if (!running) {
+        timer->EGR = TIM_EGR_UG;
+        timer->SR  = 0;
+        timer->CR1 |= TIM_CR1_CEN;
+    }
+    return true;
+}
+
+bool PWM_CaptureCh_Init(GP_Pin pin, TIM_TypeDef* timer, uint8_t channel, uint8_t af)
+{
+    return PWM_CaptureCh_Init_Ex(pin, timer, channel, af, is32bit(timer) ? 0 : 15, 0);
+}
+
+bool PWM_CaptureCh_Stop(TIM_TypeDef* timer, uint8_t channel)
+{
+    const int idx = capIndex(timer);
+    if (idx < 0 || channel < 1 || channel > maxChannels(timer)) return false;
+    timer->CCER &= ~(0xFUL << ((channel - 1) * 4U));
+    ChCapState* s = &chCap[idx][channel - 1];
+    s->enabled = false;
+    s->valid   = false;
+    s->synced  = false;
+    return true;
+}
+
+void PWM_CaptureCh_Poll(TIM_TypeDef* timer)
+{
+    const int idx = capIndex(timer);
+    if (idx < 0) return;
+    const uint8_t n = maxChannels(timer);
+    for (uint8_t ch = 1; ch <= n; ch++) chPoll(timer, idx, ch);
+}
+
+void PWM_CaptureCh_PollAll(void)
+{
+    for (size_t i = 0; i < sizeof(capTimers) / sizeof(capTimers[0]); i++) {
+        PWM_CaptureCh_Poll(capTimers[i]);
+    }
+}
+
+bool PWM_CaptureCh_IsActive(TIM_TypeDef* timer, uint8_t channel)
+{
+    const int idx = capIndex(timer);
+    return idx >= 0 && channel >= 1 && channel <= maxChannels(timer) && chActive(timer, idx, channel);
+}
+
+uint32_t PWM_CaptureCh_GetPeriodTicks(TIM_TypeDef* timer, uint8_t channel)
+{
+    const int idx = capIndex(timer);
+    if (idx < 0 || channel < 1 || channel > maxChannels(timer)) return 0;
+    return chActive(timer, idx, channel) ? chCap[idx][channel - 1].period : 0;
+}
+
+uint32_t PWM_CaptureCh_GetHighTicks(TIM_TypeDef* timer, uint8_t channel)
+{
+    const int idx = capIndex(timer);
+    if (idx < 0 || channel < 1 || channel > maxChannels(timer)) return 0;
+    return chActive(timer, idx, channel) ? chCap[idx][channel - 1].high : 0;
+}
+
+float PWM_CaptureCh_GetFrequency(TIM_TypeDef* timer, uint8_t channel)
+{
+    const uint32_t p = PWM_CaptureCh_GetPeriodTicks(timer, channel);
+    if (!p) return 0.0f;
+    return (float)UNOQ_TIM_CLK_HZ / ((float)(timer->PSC + 1U) * (float)p);
+}
+
+float PWM_CaptureCh_GetDuty(TIM_TypeDef* timer, uint8_t channel)
+{
+    const int idx = capIndex(timer);
+    if (idx < 0 || channel < 1 || channel > maxChannels(timer)) return 0.0f;
+
+    const ChCapState* s = &chCap[idx][channel - 1];
+    if (!s->enabled) return 0.0f;
+
+    if (!chActive(timer, idx, channel)) {
+        /* No edges: signal is stuck. Report 100% / 0% from the pin level. */
+        return (s->port->IDR & (1UL << s->pin)) ? 100.0f : 0.0f;
+    }
+    return (float)s->high * 100.0f / (float)s->period;
 }
 
 /* =============================================================================

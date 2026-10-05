@@ -81,19 +81,49 @@ bool PWM_SetPolarity(TIM_TypeDef* timer, uint8_t channel, bool complementary, bo
 bool PWM_SetDeadTime(TIM_TypeDef* timer, uint32_t dead_ns, uint32_t timer_clk);
 
 /* ------------------------------------------------------------------ */
-/* PWM input capture                                                  */
+/* PWM input capture - paired mode (one signal per timer)            */
+/* Uses TI1/TI2 slave-reset mode. Cannot be mixed with the           */
+/* per-channel API below on the same timer.                          */
 /* ------------------------------------------------------------------ */
 bool     PWM_Capture_Init(GP_Pin pin, TIM_TypeDef* timer, uint8_t af, uint8_t inputChannel);
 bool     PWM_Capture_Init_CH1(GP_Pin pin, TIM_TypeDef* timer, uint8_t af);
 bool     PWM_Capture_Init_CH2(GP_Pin pin, TIM_TypeDef* timer, uint8_t af);
 bool     PWM_Capture_Init_Ex(GP_Pin pin, TIM_TypeDef* timer, uint8_t af,
                             uint8_t inputChannel, uint16_t prescaler);
-void     PWM_Capture_SetTimeout(uint32_t ms);
+void     PWM_Capture_SetTimeout(uint32_t ms);   /* shared with per-channel API */
 bool     PWM_Capture_IsActive(TIM_TypeDef* timer);
 uint32_t PWM_Capture_GetPeriodTicks(TIM_TypeDef* timer);
 uint32_t PWM_Capture_GetHighTicks(TIM_TypeDef* timer);
 float    PWM_Capture_GetFrequency(TIM_TypeDef* timer);
 float    PWM_Capture_GetDuty(TIM_TypeDef* timer);
+
+/* ------------------------------------------------------------------ */
+/* PWM input capture - independent per channel (CH1..CH4)            */
+/*                                                                    */
+/* Every channel captures both edges of its own pin on a free-running */
+/* counter, so one timer can measure up to 4 different signals.       */
+/* All channels of a timer share PSC/ARR: the first Init on a timer   */
+/* sets them, later Inits reuse them.                                 */
+/*                                                                    */
+/* Edges are read by POLLING. Call PWM_CaptureCh_Poll()/PollAll() (or */
+/* any getter) more often than the shortest pulse (high or low) of    */
+/* the signals you measure.                                           */
+/* Period range with the default prescaler (tick = 10 MHz):           */
+/*   16-bit timers: period < ~6.5 ms (> ~153 Hz)                      */
+/*   32-bit timers (TIM2/TIM5): practically unlimited                 */
+/* Use _Ex with a bigger prescaler for slower signals.                */
+/* ------------------------------------------------------------------ */
+bool     PWM_CaptureCh_Init(GP_Pin pin, TIM_TypeDef* timer, uint8_t channel, uint8_t af);
+bool     PWM_CaptureCh_Init_Ex(GP_Pin pin, TIM_TypeDef* timer, uint8_t channel, uint8_t af,
+                               uint16_t prescaler, uint8_t filter /* ICxF 0..15 */);
+bool     PWM_CaptureCh_Stop(TIM_TypeDef* timer, uint8_t channel);
+void     PWM_CaptureCh_Poll(TIM_TypeDef* timer);   /* all initialised channels of one timer */
+void     PWM_CaptureCh_PollAll(void);              /* every timer */
+bool     PWM_CaptureCh_IsActive(TIM_TypeDef* timer, uint8_t channel);
+uint32_t PWM_CaptureCh_GetPeriodTicks(TIM_TypeDef* timer, uint8_t channel);
+uint32_t PWM_CaptureCh_GetHighTicks(TIM_TypeDef* timer, uint8_t channel);
+float    PWM_CaptureCh_GetFrequency(TIM_TypeDef* timer, uint8_t channel);
+float    PWM_CaptureCh_GetDuty(TIM_TypeDef* timer, uint8_t channel);
 
 /* ------------------------------------------------------------------ */
 /* ADC (STM32U585 ADC1 Helpers)                                      */
