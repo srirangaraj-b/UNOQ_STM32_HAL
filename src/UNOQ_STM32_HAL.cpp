@@ -14,9 +14,6 @@
 #endif
 #endif
 
-/* =============================================================================
- * Interop with the standard Arduino API / other libraries
- * ===========================================================================*/
 struct GP_PinMapEntry {
     GPIO_TypeDef* port;
     uint8_t pin;
